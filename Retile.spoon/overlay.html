@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retile</title>
+<style>
+:root {
+  --pad: 28px;
+  /* One key unit. The keyboard is 18u × 5.6u (14.5u main block + 0.5u gap + 3u arrows); the height term keeps short screens scroll-free. */
+  --u: min(calc((min(1180px, 94vw) - 2 * var(--pad)) / 18), calc((100vh - 300px) / 5.6));
+  --gap: calc(var(--u) * 0.07);
+
+  --dim: rgba(0, 0, 0, 0.26);
+  --panel: rgb(242, 242, 245);
+  --edge: rgba(0, 0, 0, 0.12);
+  --shadow: rgba(0, 0, 0, 0.28);
+  --rule: rgba(0, 0, 0, 0.08);
+  --text: #1d1d1f;
+  --muted: rgba(0, 0, 0, 0.5);
+  --cap: #fff;
+  --cap-edge: rgba(0, 0, 0, 0.1);
+  --cap-text: rgba(0, 0, 0, 0.3);
+  --tint: 24%;
+  --tint-hot: 42%;
+  --tip: #fff;
+
+  /* move/workspace/focus share the arrow keys, so they get the three hues that stay distinct under colour blindness. */
+  --g-move: #2a78d6;
+  --g-workspace: #eb6834;
+  --g-focus: #1baf7a;
+  --g-layout: #6250d6;
+  --g-app: #e87ba4;
+  --g-external: #eda100;
+  --g-other: #898781;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dim: rgba(0, 0, 0, 0.42);
+    --panel: rgb(30, 30, 33);
+    --edge: rgba(255, 255, 255, 0.13);
+    --shadow: rgba(0, 0, 0, 0.55);
+    --rule: rgba(255, 255, 255, 0.08);
+    --text: rgba(255, 255, 255, 0.93);
+    --muted: rgba(255, 255, 255, 0.5);
+    --cap: rgba(255, 255, 255, 0.065);
+    --cap-edge: rgba(255, 255, 255, 0.05);
+    --cap-text: rgba(255, 255, 255, 0.3);
+    --tint: 30%;
+    --tint-hot: 52%;
+    --tip: #2c2c30;
+
+    --g-move: #3987e5;
+    --g-workspace: #d95926;
+    --g-focus: #199e70;
+    --g-layout: #9085e9;
+    --g-app: #d55181;
+    --g-external: #c98500;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: transparent; }
+body {
+  display: grid;
+  place-items: center;
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+body::before { content: ""; position: fixed; inset: 0; background: var(--dim); }
+
+#panel {
+  position: relative;
+  width: calc(var(--u) * 18 + 2 * var(--pad));
+  padding: 20px var(--pad) 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: var(--panel);
+  border-radius: 18px;
+  box-shadow: 0 0 0 0.5px var(--edge), 0 24px 80px var(--shadow);
+  animation: pop 0.16s ease-out;
+}
+@keyframes pop { from { opacity: 0; transform: scale(0.985); } }
+
+header { display: flex; align-items: baseline; gap: 10px; }
+h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+#subtitle { color: var(--muted); }
+#subtitle:empty { display: none; }
+
+#kb { position: relative; width: calc(var(--u) * 18); }
+.key {
+  position: absolute;
+  left: calc(var(--x) * var(--u) + var(--gap) / 2);
+  top: calc(var(--y) * var(--u) + var(--gap) / 2);
+  width: calc(var(--w) * var(--u) - var(--gap));
+  height: calc(var(--h) * var(--u) - var(--gap));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: calc(var(--u) * 0.11);
+  background: var(--cap);
+  box-shadow: inset 0 0 0 0.5px var(--cap-edge), 0 0.5px 1px var(--cap-edge);
+  color: var(--cap-text);
+  line-height: 1.15;
+}
+.leg { font-size: calc(var(--u) * 0.25); }
+.word .leg { font-size: calc(var(--u) * 0.165); }
+.short .leg { font-size: calc(var(--u) * 0.15); }
+.glyph { font-size: calc(var(--u) * 0.21); }
+.name { font-size: calc(var(--u) * 0.13); }
+
+.key.bound {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: stretch;
+  color: var(--text);
+}
+.seg {
+  --mix: var(--tint);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 0.03);
+  background: color-mix(in srgb, var(--c) var(--mix), transparent);
+  box-shadow: inset 0 calc(var(--u) * -0.045) 0 var(--c);
+}
+/* A border, not a gap, so the divider belongs to a segment and is no hover dead zone. */
+.seg + .seg { border-left: 1.5px solid var(--panel); }
+.seg:hover { --mix: var(--tint-hot); }
+.word .seg { padding: 0 calc(var(--u) * 0.05); }
+.seg .mods, .seg .leg { width: 100%; text-align: center; white-space: nowrap; overflow: hidden; }
+.mods { font-size: calc(var(--u) * 0.19); letter-spacing: -0.08em; opacity: 0.85; }
+.short .mods { font-size: calc(var(--u) * 0.15); }
+.mods.none { opacity: 0.5; }
+/* Too many segments to fit modifiers side by side: they wrap, and four lines plus the legend fit 1u. */
+.stack .seg { justify-content: flex-end; padding-bottom: calc(var(--u) * 0.08); }
+.stack .mods { font-size: calc(var(--u) * 0.15); line-height: 1; letter-spacing: 0; white-space: normal; word-break: break-all; }
+.stack:not(.word) .leg { font-size: calc(var(--u) * 0.2); line-height: 1; }
+
+.key.lit {
+  background: color-mix(in srgb, var(--lit) var(--tint-hot), transparent);
+  box-shadow: inset 0 0 0 1.5px var(--lit);
+  color: var(--text);
+}
+
+#other { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.other-label, footer { color: var(--muted); font-size: 12px; }
+.other-label { margin-right: 4px; }
+.chip {
+  padding: 3px 9px 4px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--c) var(--tint), transparent);
+  box-shadow: inset 0 -2px 0 var(--c);
+}
+.chip:hover { background: color-mix(in srgb, var(--c) var(--tint-hot), transparent); }
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+#legend { display: flex; flex-wrap: wrap; gap: 6px 16px; list-style: none; }
+#legend li { display: flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+footer p { white-space: nowrap; }
+
+#tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  max-width: 320px;
+  padding: 8px 12px 9px;
+  border-radius: 10px;
+  background: var(--tip);
+  box-shadow: 0 0 0 0.5px var(--edge), 0 10px 30px var(--shadow);
+  pointer-events: none;
+  opacity: 0;
+}
+#tip.on { opacity: 1; transition: opacity 0.1s; }
+#tip-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 14px; }
+#tip-chord { font-size: 15px; font-weight: 600; white-space: nowrap; }
+#tip-group { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+#tip-group::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+#tip-group:empty { display: none; }
+#tip-desc { margin-top: 2px; }
+</style>
+</head>
+<body>
+<main id="panel">
+  <header><h1 id="title"></h1><span id="subtitle"></span></header>
+  <div id="kb"></div>
+  <footer><ul id="legend"></ul><p>Hover a key to see what it does · Esc to close</p></footer>
+</main>
+<div id="tip" role="tooltip"><div id="tip-head"><span id="tip-chord"></span><span id="tip-group"></span></div><div id="tip-desc"></div></div>
+<script>window.RETILE = __RETILE_DATA__;</script>
+<script>
+"use strict";
+const R = window.RETILE;
+const $ = (id) => document.getElementById(id);
+const panel = $("panel"), kb = $("kb"), tip = $("tip");
+
+const GLYPH = { ctrl: "⌃", alt: "⌥", shift: "⇧", cmd: "⌘" };
+const ORDER = Object.keys(GLYPH);
+const MOD_NAME = { ctrl: "control", alt: "option", shift: "shift", cmd: "command" };
+const GROUPS = new Set(["move", "workspace", "focus", "layout", "app", "external"]);
+const NAMES = {
+  escape: "esc", left: "←", right: "→", up: "↑", down: "↓",
+  pageup: "Page Up", pagedown: "Page Down", home: "Home", end: "End", forwarddelete: "Forward Delete", help: "Help",
+};
+const keyName = (k) =>
+  NAMES[k] || (/^f\d+$/.test(k) ? k.toUpperCase() : k.startsWith("pad") ? "Keypad " + k.slice(3) : k.length === 1 && k.toUpperCase().length === 1 ? k.toUpperCase() : k);
+const modText = (b) => b.mods.map((m) => GLYPH[m]).join("");
+const chord = (b) => (b.mods.length ? modText(b) + " " : "") + keyName(b.key);
+const color = (g) => `var(--g-${GROUPS.has(g) ? g : "other"})`;
+const groupLabel = new Map(R.groups.map((g) => [g.id, g.label]));
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+// --- layout: x/y/w/h in key units -------------------------------------------
+const key = (id, w = 1) => ({ id, w, label: keyName(id) });
+const mod = (m, w) => ({ mod: m, w, label: "" });
+const blank = (w, label = "") => ({ w, label });
+const chars = (s) => [...s].map((c) => key(c));
+const ROWS = [
+  [0.6, [key("escape", 1.5), ...Array.from({ length: 12 }, (_, i) => key("f" + (i + 1))), blank(1)]],
+  [1, [...chars("`1234567890-="), key("delete", 1.5)]],
+  [1, [key("tab", 1.5), ...chars("qwertyuiop[]\\")]],
+  [1, [blank(1.75, "caps lock"), ...chars("asdfghjkl;'"), key("return", 1.75)]],
+  [1, [mod("shift", 2.25), ...chars("zxcvbnm,./"), mod("shift", 2.25)]],
+  [1, [blank(1, "fn"), mod("ctrl", 1.25), mod("alt", 1.25), mod("cmd", 1.5), key("space", 5.5), mod("cmd", 1.5), mod("alt", 1.25), mod("ctrl", 1.25)]],
+];
+const caps = [];
+let height = 0;
+for (const [h, row] of ROWS) {
+  let x = 0;
+  for (const c of row) { caps.push({ ...c, x, y: height, h }); x += c.w; }
+  height += h;
+}
+const shiftRow = height - 2;
+caps.push(
+  { ...key("up"), x: 16, y: shiftRow, h: 1 },
+  { ...key("left"), x: 15, y: shiftRow + 1, h: 1 },
+  { ...key("down"), x: 16, y: shiftRow + 1, h: 1 },
+  { ...key("right"), x: 17, y: shiftRow + 1, h: 1 },
+);
+kb.style.height = `calc(var(--u) * ${height})`;
+
+// --- binds --------------------------------------------------------------------
+const rank = (b) => b.mods.map((m) => ORDER.indexOf(m));
+function byMods(a, b) {
+  const x = rank(a), y = rank(b);
+  if (x.length !== y.length) return x.length - y.length;
+  const i = x.findIndex((v, j) => v !== y[j]);
+  return i < 0 ? 0 : x[i] - y[i];
+}
+const bindsByKey = new Map();
+R.binds.forEach((b, i) => {
+  b.i = i;
+  if (!bindsByKey.has(b.key)) bindsByKey.set(b.key, []);
+  bindsByKey.get(b.key).push(b);
+});
+for (const list of bindsByKey.values()) list.sort(byMods);
+
+// --- render -------------------------------------------------------------------
+$("title").textContent = R.title;
+$("subtitle").textContent = R.subtitle;
+
+for (const c of caps) {
+  const k = el("div", "key");
+  k.style.cssText = `--x:${c.x};--y:${c.y};--w:${c.w};--h:${c.h}`;
+  if (c.h < 1) k.classList.add("short");
+  if ([...c.label].length > 1) k.classList.add("word");
+  const binds = bindsByKey.get(c.id);
+  if (binds) {
+    k.classList.add("bound");
+    for (const b of binds) {
+      const s = el("div", "seg");
+      s.dataset.b = b.i;
+      s.style.setProperty("--c", color(b.group));
+      s.append(el("span", b.mods.length ? "mods" : "mods none", modText(b) || "–"), el("span", "leg", c.label));
+      k.append(s);
+    }
+  } else if (c.mod) {
+    k.dataset.mod = c.mod;
+    k.append(el("span", "glyph", GLYPH[c.mod]), el("span", "name", MOD_NAME[c.mod]));
+  } else {
+    k.append(el("span", "leg", c.label));
+  }
+  kb.append(k);
+}
+
+const drawn = new Set(caps.map((c) => c.id));
+const offBoard = R.binds.filter((b) => !drawn.has(b.key));
+if (offBoard.length) {
+  const row = el("div");
+  row.id = "other";
+  row.append(el("span", "other-label", "Other keys"));
+  for (const b of offBoard) {
+    const chip = el("span", "chip", chord(b));
+    chip.dataset.b = b.i;
+    chip.style.setProperty("--c", color(b.group));
+    row.append(chip);
+  }
+  kb.after(row);
+}
+
+for (const g of R.groups) {
+  const li = el("li");
+  const sw = el("span", "sw");
+  sw.style.setProperty("--c", color(g.id));
+  li.append(sw, g.label);
+  $("legend").append(li);
+}
+
+// Shrinks overflowing legends; all segments of a key share one size per line so a split stays aligned.
+// Modifiers that would shrink below legibility are stacked instead.
+function fit() {
+  const text = document.createRange();
+  const ratioOf = (e) => {
+    text.selectNodeContents(e);
+    return (e.getBoundingClientRect().width - 1) / text.getBoundingClientRect().width;
+  };
+  const u = kb.getBoundingClientRect().width / 18;
+  for (const k of kb.children) {
+    k.classList.remove("stack");
+    for (const sel of [".mods", ".leg"]) {
+      const els = [...k.querySelectorAll(sel)];
+      els.forEach((e) => (e.style.fontSize = ""));
+      const ratio = Math.min(1, ...els.map(ratioOf));
+      if (ratio < 1) {
+        const px = parseFloat(getComputedStyle(els[0]).fontSize) * ratio;
+        if (sel === ".mods" && px < u * 0.13 && !k.classList.contains("short")) k.classList.add("stack");
+        else els.forEach((e) => (e.style.fontSize = px + "px"));
+      }
+    }
+  }
+}
+fit();
+addEventListener("resize", fit);
+
+// --- tooltip ------------------------------------------------------------------
+let current = null, hideTimer = 0;
+
+function show(target) {
+  clearTimeout(hideTimer);
+  if (target === current) return;
+  current = target;
+  const b = R.binds[target.dataset.b];
+  $("tip-chord").textContent = chord(b);
+  $("tip-group").textContent = groupLabel.get(b.group) || "";
+  $("tip-desc").textContent = b.desc;
+  tip.style.setProperty("--c", color(b.group));
+  kb.style.setProperty("--lit", color(b.group));
+  for (const m of kb.querySelectorAll("[data-mod]")) m.classList.toggle("lit", b.mods.includes(m.dataset.mod));
+
+  const r = target.getBoundingClientRect(), p = panel.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  const x = Math.max(p.left + 8, Math.min(r.left + r.width / 2 - t.width / 2, p.right - 8 - t.width));
+  const above = r.top - t.height - 8, below = r.bottom + 8;
+  // Below for the bottom key row and the chips, so the tooltip doesn't cover the modifier keys it lights.
+  let y = r.bottom > kb.getBoundingClientRect().bottom - 8 ? below : above;
+  if (y < 8) y = below;
+  else if (y + t.height > innerHeight - 8) y = above;
+  tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  tip.classList.add("on");
+}
+
+function hide() {
+  current = null;
+  tip.classList.remove("on");
+  for (const m of kb.querySelectorAll(".lit")) m.classList.remove("lit");
+}
+
+// pointerover fires on the segment being entered, so moving between segments swaps content without hiding;
+// the short delay bridges the gaps between keys.
+document.addEventListener("pointerover", (e) => {
+  const target = e.target.closest("[data-b]");
+  if (target) show(target);
+  else {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(hide, 90);
+  }
+});
+
+// --- closing ------------------------------------------------------------------
+const close = () => window.webkit?.messageHandlers?.retile?.postMessage({ type: "close" });
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); close(); }
+});
+document.addEventListener("click", (e) => {
+  if (!panel.contains(e.target)) close();
+});
+</script>
+</body>
+</html>
