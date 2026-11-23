@@ -6,6 +6,7 @@ local layouts = load("layouts.lua")
 local chords = load("chords.lua")
 local config = load("config.lua")
 local actions = load("actions.lua")(layouts)
+local preview = load("preview.lua")(layouts)
 
 local KEYS = {}
 for _, k in ipairs({ "left", "right", "up", "down", "return", "space", "escape", "tab", "f5", "pad+",
@@ -138,7 +139,11 @@ test("neighbor follows the layout's geometry", function()
   eq(layouts.neighbor(grid, 2, "down"), 4, "top-middle down: an exact tie goes to the first")
   eq(layouts.neighbor(grid, 3, "left"), 2)
   eq(layouts.neighbor(grid, 3, "right"), nil)
-  eq(layouts.neighbor(layouts.arrange("monocle", 3, LANDSCAPE, NOGAPS), 1, "right"), nil)
+  local monocle = layouts.arrange("monocle", 3, LANDSCAPE, NOGAPS)
+  eq(layouts.neighbor(monocle, 1, "right"), nil)
+  eq({ layouts.neighbor(monocle, 1, "right", "monocle"), layouts.neighbor(monocle, 1, "up", "monocle") }, { 2, 3 },
+    "monocle steps through the order, wrapping")
+  eq(layouts.neighbor({ LANDSCAPE }, 1, "left", "monocle"), nil, "a lone monocle window has no neighbour")
   -- Below the first: 2 is mostly under it, 3's centre is closer.
   local frames = { frame(0, 0, 100, 100), frame(40, 110, 200, 100), frame(0, 110, 30, 100) }
   eq(layouts.neighbor(frames, 1, "down"), 2, "bigger overlap beats closer centre")
@@ -160,6 +165,228 @@ test("reconcile puts incoming windows last", function()
   eq(layouts.reconcile({}, { 9 }, "last", { 9 }), { 9 })
   eq(layouts.reconcile({ 1, 2 }, { 1, 2, 9 }, "first", { 9, 7, 9 }), { 1, 2, 9 })
   eq(layouts.reconcile({ 1, 2, 3 }, { 1, 2, 3 }, "last", { 3, 1 }), { 2, 3, 1 })
+end)
+
+test("layout settings step within their bounds", function()
+  local list = { "grid", "tall", "monocle" }
+  eq({ layouts.cycle(list, "tall", 1), layouts.cycle(list, "monocle", 1), layouts.cycle(list, "grid", -1) },
+    { "monocle", "grid", "monocle" })
+  eq({ layouts.cycle(list, "rows", 1), layouts.cycle(list, "rows", -1) }, { "grid", "monocle" }, "from outside the list")
+  eq({ layouts.stepRatio(0.6, 1, 0.05), layouts.stepRatio(0.88, 1, 0.05), layouts.stepRatio(0.12, -1, 0.05) },
+    { 0.65, 0.9, 0.1 })
+  local r = 0.6
+  for _ = 1, 3 do r = layouts.stepRatio(r, 1, 0.1) end
+  eq(r, 0.9, "steps don't drift")
+  eq({ layouts.stepMasters(1, 1, 3), layouts.stepMasters(3, 1, 3), layouts.stepMasters(1, -1, 3), layouts.stepMasters(5, -1, 2) },
+    { 2, 3, 1, 2 })
+end)
+
+-- preview --------------------------------------------------------------------
+
+local CFG = assert(config.build(nil, ENV))
+local SCREEN = { frame = frame(0, 25, 1200, 775), full = frame(0, 0, 1200, 800), name = "Studio Display" }
+local function tile(layout, n, area, extra)
+  local opts = { ratio = 0.6, masters = 1, gaps = CFG.gaps }
+  for k, v in pairs(extra or {}) do opts[k] = v end
+  return layouts.arrange(layout, n, area or SCREEN.frame, opts)
+end
+local function settings(layout, windows, paused)
+  return { layout = layout, ratio = 0.6, masters = 1, paused = paused or false, count = windows }
+end
+-- Three columns, the first focused; spaces: user, here, full-screen app;
+-- a display above with one window.
+local UPPER = { full = frame(0, -900, 1600, 900), frame = frame(0, -875, 1600, 875) }
+local function scene(changes)
+  local s = {
+    layout = "columns", ratio = 0.6, masters = 1, paused = false,
+    screen = SCREEN, windows = tile("columns", 3), focus = 1,
+    spaces = {
+      index = 2, kinds = { "user", "user", "other" },
+      left = { user = true, state = settings("rows", 2) }, right = { user = false, state = settings("grid", 0) },
+    },
+    displays = {
+      up = { full = UPPER.full, frame = UPPER.frame, user = true, state = settings("tall"), windows = tile("tall", 1, UPPER.frame) },
+    },
+  }
+  for k, v in pairs(changes or {}) do s[k] = v end
+  return s
+end
+local function build(action, arg, s, cfg) return preview.build(s or scene(), action, arg, cfg or CFG) end
+-- To a hundredth of a point, which also makes 480 and 480.0 compare equal.
+local function near(r)
+  local t = {}
+  for k, v in pairs(r) do t[k] = string.format("%.2f", v) end
+  return t
+end
+local function targets(spec)
+  local list = {}
+  for i, w in ipairs(spec.windows) do list[i] = w.to end
+  return list
+end
+
+test("every action has a preview", function()
+  for name, action in pairs(actions) do
+    for _, arg in ipairs(action.args or { false }) do
+      local spec = build(name, arg or nil)
+      assert(spec and #spec.windows > 0 and spec.view, name .. " " .. tostring(arg))
+    end
+  end
+end)
+
+test("swap previews trade places, or bump at the edge", function()
+  local cols = tile("columns", 3)
+  local spec = build("swap", "right")
+  eq(targets(spec), { cols[2], cols[1], cols[3] })
+  eq(spec.focus, { from = 1, to = 1 })
+  eq({ spec.bump, spec.note, spec.example }, {})
+  spec = build("swap", "right", scene({ focus = 3 }))
+  eq(spec.bump, { window = 3, dir = "right" })
+  eq(spec.note, "No window to the right")
+  eq(targets(spec), cols, "nothing moves")
+  eq(build("promote", nil, scene({ focus = 3 })).windows[3].to, cols[1], "promote swaps with the main window")
+  eq(build("promote", nil).windows[1].to, cols[2], "the main window swaps with the next")
+  spec = build("swap", "right", scene({ layout = "monocle", windows = tile("monocle", 3) }))
+  eq(spec.note, "In monocle this only changes the window order")
+end)
+
+test("focus previews move the focus, or bump it at the edge", function()
+  local spec = build("focus", "right", scene({ focus = 2 }))
+  eq(spec.focus, { from = 2, to = 3 })
+  spec = build("focus", "left")
+  eq({ spec.focus, spec.bump, spec.note }, { { from = 1, to = 1 }, { dir = "left" }, "No window to the left" })
+  eq(build("focus", "left", scene({ layout = "monocle", windows = tile("monocle", 3) })).focus, { from = 1, to = 3 })
+end)
+
+test("keys acting in the layout tile out-of-place windows first", function()
+  local s = scene({ focus = 2 })
+  s.windows = { frame(100, 100, 300, 300), s.windows[2], s.windows[3] }
+  eq(build("focus", "right", s).windows[1].to, tile("columns", 3)[1])
+  eq(build("retile", nil, s).windows[1], { from = frame(100, 100, 300, 300), to = tile("columns", 3)[1] })
+  eq(build("retile").note, "Every window is in place already")
+  local narrow = scene()
+  local f = narrow.windows[1]
+  narrow.windows[1] = frame(f.x, f.y, f.w - 40, f.h)
+  eq(build("retile", nil, narrow).note, nil, "a window only too narrow is out of place")
+end)
+
+test("layout previews re-tile with the new settings and name them", function()
+  local spec = build("layout", "tall")
+  eq({ targets(spec), spec.label, spec.note }, { tile("tall", 3), "tall" })
+  eq(build("layout", "columns").note, "Already the columns layout")
+  local two = scene({ windows = tile("columns", 2) })
+  eq(build("layout", "grid", two).note, "With 2 windows, grid looks the same as columns")
+  local cfg = assert(config.build({ layouts = { "columns", "spiral", "tall" } }, ENV))
+  eq(build("cycleLayout", "next", nil, cfg).label, "spiral", "next in the configured cycle")
+  eq(build("cycleLayout", "prev", nil, cfg).label, "tall")
+
+  local tall = scene({ layout = "tall", windows = tile("tall", 3) })
+  spec = build("resize", "grow", tall)
+  eq({ targets(spec), spec.label }, { tile("tall", 3, nil, { ratio = 0.65 }), "Main area 65%" })
+  eq(build("resize", "grow", scene({ layout = "tall", ratio = 0.9, windows = tile("tall", 3, nil, { ratio = 0.9 }) })).note,
+    "The main area is at its largest")
+  eq(build("resize", "shrink").note, "The columns layout has no main area")
+  spec = build("masters", "more", tall)
+  eq({ targets(spec), spec.label }, { tile("tall", 3, nil, { masters = 2 }), "2 main windows" })
+  eq(build("masters", "fewer", tall).note, "The main area has just one window")
+  eq(build("masters", "more", scene({ layout = "tall", masters = 3, windows = tile("tall", 3, nil, { masters = 3 }) })).note,
+    "Every window is in the main area")
+end)
+
+test("float previews: the window stays, the layout closes up or takes it in", function()
+  local spec = build("toggleFloat", nil, scene({ focus = 2 }))
+  local two = tile("columns", 2)
+  eq(targets(spec), { two[1], tile("columns", 3)[2], two[2] })
+  eq({ spec.windows[2].floating, spec.label }, { "after", "Floating" })
+
+  local floated = scene({ focus = false, windows = tile("columns", 2), loose = { frame = frame(300, 200, 400, 300), floated = true, managed = true } })
+  spec = build("toggleFloat", nil, floated)
+  eq({ targets(spec), spec.windows[3].floating, spec.focus }, { tile("columns", 3), "before", { from = 3, to = 3 } })
+  local first = assert(config.build({ newWindows = "first" }, ENV))
+  local cols = tile("columns", 3)
+  eq(targets(build("toggleFloat", nil, floated, first)), { cols[2], cols[3], cols[1] }, "joins first with newWindows = first")
+
+  floated.loose.floated = false
+  spec = build("toggleFloat", nil, floated)
+  eq({ spec.note, targets(spec)[3] }, { "This window isn't tiled", frame(300, 200, 400, 300) })
+end)
+
+test("pause previews: resuming tiles, pausing leaves a new window be", function()
+  local s = scene({ paused = true })
+  s.windows = { frame(10, 40, 500, 500), s.windows[2], s.windows[3] }
+  local spec = build("togglePause", nil, s)
+  eq({ spec.paused, targets(spec) }, { { from = true, to = false }, tile("columns", 3) })
+  spec = build("togglePause")
+  eq({ spec.paused, #spec.windows, spec.windows[4].from, spec.focus }, { { from = false, to = true }, 4, nil, { from = 1, to = 4 } })
+  eq(near(spec.windows[4].to), near(frame(360, 195.5, 480, 348.75)), "a window opening mid-screen")
+end)
+
+test("space previews pan to the space beside, carrying the window", function()
+  local s = scene({ focus = 2 })
+  local spec = build("moveToSpace", "left", s)
+  local dx = -1200 * 1.06
+  local there = { x = SCREEN.frame.x + dx, y = SCREEN.frame.y, w = SCREEN.frame.w, h = SCREEN.frame.h }
+  local before, after = tile("rows", 2, there), tile("rows", 3, there)
+  eq({ spec.pan, spec.dots, #spec.desktops }, { { x = dx, y = 0 }, { kinds = { "user", "user", "other" }, from = 2, to = 1 }, 2 })
+  local cols = tile("columns", 3)
+  eq(spec.windows[2], { from = cols[2], via = { x = cols[2].x + dx, y = cols[2].y, w = cols[2].w, h = cols[2].h }, to = after[3] })
+  eq({ spec.windows[1].to, spec.windows[3].to }, { cols[1], cols[3] }, "the space left behind is re-tiled only when shown")
+  eq({ spec.windows[4], spec.windows[5] }, { { from = before[1], to = after[1] }, { from = before[2], to = after[2] } })
+
+  spec = build("moveToSpace", "right", s)
+  eq({ spec.bump, spec.note, spec.pan }, { { window = 2, dir = "right" }, "The space to the right is a full-screen app" })
+  s.spaces = { index = 2, kinds = { "user", "user" }, left = s.spaces.left }
+  spec = build("moveToSpace", "right", s)
+  eq({ spec.dots, spec.label }, { { kinds = { "user", "user", "user" }, from = 2, to = 3, added = true }, "New space" })
+  eq(spec.windows[2].to, tile("grid", 1, { x = 1272, y = 25, w = 1200, h = 775 })[1], "alone on the new space")
+  eq(build("moveToSpace", "right", s, assert(config.build({ createSpaces = false }, ENV))).note, "No space to the right")
+  eq(build("moveToSpace", "left", scene({ spaces = { index = 1, kinds = { "user" } } })).note, "No space to the left")
+  spec = build("moveToSpace", "right", scene({ spaces = { kinds = {} } }))
+  eq({ spec.example, spec.note }, { true, "macOS isn't listing this display's spaces" })
+
+  local loose = scene({ focus = false, loose = { frame = frame(300, 200, 400, 300), floated = true, managed = true } })
+  spec = build("moveToSpace", "left", loose)
+  eq(spec.windows[4].to, frame(300 + dx, 200, 400, 300), "a floating window keeps its place")
+  eq(#spec.windows, 6)
+end)
+
+test("display previews move the window across and re-tile both", function()
+  local spec = build("moveToScreen", "up", scene({ focus = 2 }))
+  eq({ spec.view, spec.desktops }, { frame(0, -900, 1600, 1700), { SCREEN.full, UPPER.full } })
+  local two, up = tile("columns", 2), tile("tall", 2, UPPER.frame)
+  eq(targets(spec), { two[1], up[2], two[2], up[1] })
+  eq(build("moveToScreen", "down").note, "No display below")
+  local s = scene()
+  s.displays.up.user = false
+  eq(build("moveToScreen", "up", s).note, "The display above is showing a full-screen app")
+  s.displays.up.user, s.displays.up.state.paused = true, true
+  local cols = tile("columns", 3)
+  eq(near(build("moveToScreen", "up", s).windows[1].to), near({
+    x = (cols[1].x - SCREEN.frame.x) * 1600 / 1200, y = UPPER.frame.y + (cols[1].y - SCREEN.frame.y) * 875 / 775,
+    w = cols[1].w * 1600 / 1200, h = cols[1].h * 875 / 775,
+  }), "a paused display takes it where it falls")
+end)
+
+test("without anything to act on, previews show an example", function()
+  local spec = build("swap", "left", scene({ focus = false }))
+  eq({ spec.example, spec.note, spec.focus.from ~= nil }, { true, "No tiled window is focused", true })
+  local ex = tile("columns", 4)
+  eq(spec.windows[spec.focus.from].to, ex[spec.focus.from - 1], "an example window that can move left")
+  spec = build("focus", "left", scene({ focus = false }))
+  eq({ spec.example, spec.focus.to }, { true, spec.focus.from - 1 }, "an example window with a window to its left")
+  eq(build("layout", "tall", scene({ paused = true })).note, "Tiling is paused on this space")
+  spec = build("layout", "columns", scene({ windows = {}, focus = false }))
+  eq({ spec.example, spec.note, spec.label }, { true, "No windows are tiled here", "columns" },
+    "the example starts from another layout when the scene's own wouldn't change")
+  spec = build("retile", nil, scene({ windows = {}, focus = false }))
+  assert(not spec.windows[1].from or spec.windows[1].from.w ~= spec.windows[1].to.w, "an out-of-place example window")
+  eq(build("moveToScreen", "up", scene({ focus = false, loose = { frame = SCREEN.frame, managed = false } })).note,
+    "Retile doesn't manage the focused window")
+end)
+
+test("describe counts windows and user spaces", function()
+  eq(preview.describe(scene()), "columns layout · 3 windows · space 2 of 2 · Studio Display")
+  eq(preview.describe(scene({ paused = true, windows = { SCREEN.frame }, spaces = { index = 3, kinds = { "user", "other", "other" } } })),
+    "tiling paused · 1 window · Studio Display")
 end)
 
 -- chords ---------------------------------------------------------------------

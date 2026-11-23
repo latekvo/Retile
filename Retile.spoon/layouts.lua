@@ -1,5 +1,6 @@
--- Pure geometry: layout algorithms, gaps, directional neighbours and window
--- ordering. No hs.* here so it runs under plain Lua in the unit tests.
+-- Pure geometry: layout algorithms, gaps, directional neighbours, window
+-- ordering and the layout settings' steps. No hs.* here so it runs under
+-- plain Lua in the unit tests.
 local M = {}
 
 local function rect(x, y, w, h)
@@ -125,8 +126,14 @@ local AXES = {
 
 -- Index of the frame next to frames[i] in `dir`: among the nearest frames
 -- entirely on that side, the one overlapping it most across the axis, then the
--- one whose centre is closest. Nil at the edge of the layout.
-function M.neighbor(frames, i, dir)
+-- one whose centre is closest. Nil at the edge of the layout. In monocle,
+-- whose frames all coincide, left/up and right/down step through the order.
+function M.neighbor(frames, i, dir, layout)
+  if layout == "monocle" then
+    if #frames < 2 then return nil end
+    local step = (dir == "left" or dir == "up") and -1 or 1
+    return (i - 1 + step) % #frames + 1
+  end
   local a, cur = AXES[dir], frames[i]
   local candidates, nearest = {}, math.huge
   for j, f in ipairs(frames) do
@@ -182,6 +189,26 @@ function M.reconcile(order, present, placement, incoming)
     end
   end
   return table.move(tail, 1, #tail, #result + 1, result)
+end
+
+-- The layout `step` places from `name` in `list`, wrapping; from a layout not
+-- in it, the first going forward and the last going back.
+function M.cycle(list, name, step)
+  for i, v in ipairs(list) do
+    if v == name then return list[(i - 1 + step) % #list + 1] end
+  end
+  return step > 0 and list[1] or list[#list]
+end
+
+-- `ratio` moved by `sign` steps, kept within 0.1-0.9 and rounded off so
+-- repeated steps don't drift.
+function M.stepRatio(ratio, sign, step)
+  return math.floor(math.min(math.max(ratio + sign * step, 0.1), 0.9) * 10000 + 0.5) / 10000
+end
+
+-- `masters` moved by `sign`, from 1 up to the `n` windows there are.
+function M.stepMasters(masters, sign, n)
+  return math.max(1, math.min(masters + sign, n))
 end
 
 return M

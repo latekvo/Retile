@@ -16,6 +16,7 @@ local layouts = load("layouts.lua")
 local chords = load("chords.lua")
 local config = load("config.lua")
 local actions = load("actions.lua")(layouts)
+local preview = load("preview.lua")(layouts)
 local Tiler = load("tiler.lua")
 local Overlay = load("overlay.lua")
 
@@ -80,13 +81,21 @@ function obj:stop()
 end
 
 -- Data for overlay.html: the active hotkeys (a later hs.hotkey on one of
--- Retile's chords shadows it), others only with showOtherHotkeys.
+-- Retile's chords shadows it), others only with showOtherHotkeys. Retile's
+-- actions come with a preview of what they would do now.
 function obj:keymap()
+  local scene = self.tiler:scene()
   local binds = {}
   for _, hotkey in ipairs(hs.hotkey.getHotkeys()) do
     local b = self.hotkeys[hotkey]
     if b then
-      binds[#binds + 1] = { key = b.key, mods = b.mods, desc = b.desc, group = b.group }
+      binds[#binds + 1] = {
+        key = b.key,
+        mods = b.mods,
+        desc = b.desc,
+        group = b.group,
+        preview = scene and b.action and preview.build(scene, b.action, b.arg, self.config),
+      }
     elseif self.config.showOtherHotkeys then
       local chord = chords.fromHotkeyIndex(hotkey.idx)
       -- msg is "<idx>: <message>", or just idx without a message.
@@ -106,7 +115,7 @@ function obj:keymap()
   for _, g in ipairs(GROUPS) do
     if used[g.id] then groups[#groups + 1] = g end
   end
-  return { title = "Retile", subtitle = self.tiler:describe(), groups = groups, binds = binds }
+  return { title = "Retile", subtitle = scene and preview.describe(scene) or "", groups = groups, binds = binds }
 end
 
 return obj

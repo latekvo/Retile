@@ -30,14 +30,6 @@ local function readingOrder(a, b)
   return fa.x < fb.x
 end
 
-local function userSpaces(screen)
-  local spaces = {}
-  for _, id in ipairs(hs.spaces.spacesForScreen(screen) or {}) do
-    if hs.spaces.spaceType(id) == "user" then spaces[#spaces + 1] = id end
-  end
-  return spaces
-end
-
 -- Adds a space to `screen` and returns its id.
 local function addSpace(screen)
   local before = {}
@@ -144,12 +136,10 @@ function Tiler:collect()
   return entries
 end
 
--- Lays out one screen. Returns its state, its windows in layout order and
--- their frames, or nil when tiling is paused there or a window is carried.
-function Tiler:tileEntry(entry)
+-- One collected screen's state, its window ids in layout order and the
+-- windows in that order; the order kept in the state is left as it was.
+function Tiler:ordered(entry)
   local state = self:stateFor(entry.space, entry.screen)
-  -- A carried window would be tiled mid-flight; the carry re-tiles on landing.
-  if state.paused or self.carrying then return end
   table.sort(entry.windows, readingOrder)
   local byId, present = {}, {}
   for _, win in ipairs(entry.windows) do
@@ -157,6 +147,18 @@ function Tiler:tileEntry(entry)
     present[#present + 1] = win:id()
   end
   local order = self.layouts.reconcile(state.order, present, self.cfg.newWindows, state.incoming)
+  local windows = {}
+  for i, id in ipairs(order) do windows[i] = byId[id] end
+  return state, order, windows
+end
+
+-- Lays out one screen. Returns its state, its windows in layout order and
+-- their frames, or nil when tiling is paused there or a window is carried.
+function Tiler:tileEntry(entry)
+  local state = self:stateFor(entry.space, entry.screen)
+  -- A carried window would be tiled mid-flight; the carry re-tiles on landing.
+  if state.paused or self.carrying then return end
+  local _, order, windows = self:ordered(entry)
   state.order, state.incoming = order, {}
 
   local frames = self.layouts.arrange(state.layout, #order, entry.screen:frame(), {
@@ -164,11 +166,9 @@ function Tiler:tileEntry(entry)
     masters = state.masters,
     gaps = self.cfg.gaps,
   })
-  local windows = {}
-  for i, id in ipairs(order) do
-    windows[i] = byId[id]
-    if not sameFrame(windows[i]:frame(), frames[i]) then
-      windows[i]:setFrame(frames[i], self.cfg.animationDuration)
+  for i, win in ipairs(windows) do
+    if not sameFrame(win:frame(), frames[i]) then
+      win:setFrame(frames[i], self.cfg.animationDuration)
     end
   end
   return { state = state, windows = windows, frames = frames }
@@ -214,13 +214,7 @@ function Tiler:current()
 end
 
 function Tiler:neighbor(tiled, i, dir)
-  if tiled.state.layout == "monocle" then
-    local n = #tiled.windows
-    if n < 2 then return nil end
-    local step = (dir == "left" or dir == "up") and -1 or 1
-    return (i - 1 + step) % n + 1
-  end
-  return self.layouts.neighbor(tiled.frames, i, dir)
+  return self.layouts.neighbor(tiled.frames, i, dir, tiled.state.layout)
 end
 
 function Tiler:swapSlots(tiled, i, j)
@@ -382,22 +376,13 @@ end
 function Tiler:cycleLayout(step)
   local state = self:current()
   if not state then return end
-  local list = self.cfg.layouts
-  local i = indexOf(list, state.layout)
-  local name
-  if i then
-    name = list[(i - 1 + step) % #list + 1]
-  else
-    name = step > 0 and list[1] or list[#list]
-  end
-  self:setLayout(name)
+  self:setLayout(self.layouts.cycle(self.cfg.layouts, state.layout, step))
 end
 
 function Tiler:resize(sign)
   local state, entry = self:current()
   if not state then return end
-  local ratio = state.ratio + sign * self.cfg.ratioStep
-  state.ratio = math.floor(math.min(math.max(ratio, 0.1), 0.9) * 10000 + 0.5) / 10000
+  state.ratio = self.layouts.stepRatio(state.ratio, sign, self.cfg.ratioStep)
   self:tileEntry(entry)
   self:info(string.format("Main area %d%%", math.floor(state.ratio * 100 + 0.5)))
 end
@@ -405,7 +390,7 @@ end
 function Tiler:changeMasters(sign)
   local state, entry = self:current()
   if not state then return end
-  state.masters = math.max(1, math.min(state.masters + sign, #entry.windows))
+  state.masters = self.layouts.stepMasters(state.masters, sign, #entry.windows)
   self:tileEntry(entry)
   self:info("Main area: " .. state.masters .. (state.masters == 1 and " window" or " windows"))
 end
@@ -434,20 +419,73 @@ function Tiler:togglePause()
   self:info(state.paused and "Tiling paused on this space" or "Tiling resumed")
 end
 
--- One line about the current space for the keyboard map's header.
-function Tiler:describe()
-  local state, entry = self:current()
-  if not state then return "" end
-  local n = #entry.windows
-  local parts = {
-    state.paused and "tiling paused" or state.layout .. " layout",
-    n .. (n == 1 and " window" or " windows"),
-  }
-  local spaces = userSpaces(entry.screen)
-  local index = indexOf(spaces, entry.space)
-  if index then parts[#parts + 1] = string.format("space %d of %d", index, #spaces) end
-  parts[#parts + 1] = entry.screen:name()
-  return table.concat(parts, " · ")
+local function plain(f)
+  return { x = f.x, y = f.y, w = f.w, h = f.h }
+end
+
+local function frames(windows)
+  local list = {}
+  for i, win in ipairs(windows) do list[i] = plain(win:frame()) end
+  return list
+end
+
+local function settings(state, count)
+  return { layout = state.layout, ratio = state.ratio, masters = state.masters, paused = state.paused, count = count }
+end
+
+-- What the keyboard map's previews start from (see preview.lua): the focused
+-- window's screen, or the mouse's, with its tiled windows in layout order, the
+-- spaces beside it and the displays around it. Only reads; nil while a window
+-- is carried.
+function Tiler:scene()
+  if self.carrying then return end
+  local win = hs.window.focusedWindow()
+  local screen = win and win:screen() or hs.mouse.getCurrentScreen()
+  local entries = self:collect()
+  local entry = entries[screen:getUUID()]
+  if not entry then return end
+  local state, order, windows = self:ordered(entry)
+  local scene = settings(state)
+  scene.screen = { frame = plain(screen:frame()), full = plain(screen:fullFrame()), name = screen:name() }
+  scene.windows = frames(windows)
+  scene.focus = win and indexOf(order, win:id())
+  if win and not scene.focus and win:isStandard() then
+    scene.loose = { frame = plain(win:frame()), floated = self.floating[win:id()] == true, managed = self:isManaged(win) }
+  end
+
+  -- Spaces Retile hasn't tiled yet start from the settings' defaults.
+  local function remembered(space)
+    local kept = self.states[tostring(space) .. "@" .. screen:getUUID()]
+    return settings(kept or { layout = self.cfg.layout, ratio = self.cfg.ratio, masters = self.cfg.masters, paused = false },
+      kept and #kept.order or 0)
+  end
+  local spaces = hs.spaces.spacesForScreen(screen) or {}
+  local at = indexOf(spaces, entry.space)
+  scene.spaces = { index = at, kinds = {} }
+  for i, space in ipairs(spaces) do
+    scene.spaces.kinds[i] = hs.spaces.spaceType(space) == "user" and "user" or "other"
+  end
+  for dir, step in pairs({ left = -1, right = 1 }) do
+    local space = at and spaces[at + step]
+    if space then scene.spaces[dir] = { user = scene.spaces.kinds[at + step] == "user", state = remembered(space) } end
+  end
+
+  scene.displays = {}
+  for dir, towards in pairs(SCREEN_TOWARDS) do
+    local other = screen[towards](screen)
+    local there = other and entries[other:getUUID()]
+    if there then
+      local otherState, _, otherWindows = self:ordered(there)
+      scene.displays[dir] = {
+        full = plain(other:fullFrame()),
+        frame = plain(other:frame()),
+        user = hs.spaces.spaceType(there.space) == "user",
+        state = settings(otherState),
+        windows = frames(otherWindows),
+      }
+    end
+  end
+  return scene
 end
 
 function Tiler:start()

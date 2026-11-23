@@ -2,7 +2,7 @@
 
 A tiling window manager for [Hammerspoon](https://www.hammerspoon.org), driven
 by hotkeys. ⌘Y shows a keyboard map of every binding: hover a key to see what
-it does.
+it does, acted out on a small model of your screen.
 
 ## Install
 

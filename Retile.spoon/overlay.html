@@ -24,6 +24,11 @@
   --tint: 24%;
   --tint-hot: 42%;
   --tip: #fff;
+  --desk: rgba(0, 0, 0, 0.07);
+  --win: #fff;
+  --win-edge: rgba(0, 0, 0, 0.2);
+  --win-bar: rgba(0, 0, 0, 0.07);
+  --alert: rgba(0, 0, 0, 0.72);
 
   /* move/workspace/focus share the arrow keys, so they get the three hues that stay distinct under colour blindness. */
   --g-move: #2a78d6;
@@ -49,6 +54,10 @@
     --tint: 30%;
     --tint-hot: 52%;
     --tip: #2c2c30;
+    --desk: rgba(255, 255, 255, 0.06);
+    --win: #4a4a50;
+    --win-edge: rgba(255, 255, 255, 0.14);
+    --win-bar: rgba(255, 255, 255, 0.08);
 
     --g-move: #3987e5;
     --g-workspace: #d95926;
@@ -197,6 +206,47 @@ footer p { white-space: nowrap; }
 #tip-group::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
 #tip-group:empty { display: none; }
 #tip-desc { margin-top: 2px; }
+
+/* Preview: a scale model of the screen acting out the key. */
+#tip-preview { margin-top: 9px; }
+.stage { position: relative; margin: 0 auto; overflow: hidden; border-radius: 5px; }
+.world { position: absolute; inset: 0; }
+.desk, .win, .ring, .tint, .lift { position: absolute; }
+.desk { background: var(--desk); border-radius: 4px; }
+.win {
+  overflow: hidden;
+  border-radius: 2.5px;
+  background: var(--win);
+  box-shadow: 0 0 0 0.5px var(--win-edge);
+}
+.win::before { content: ""; position: absolute; inset: 0 0 auto; height: min(6px, 22%); background: var(--win-bar); }
+.win.focused { background: color-mix(in srgb, var(--c) 22%, var(--win)); }
+.tint { inset: 0; background: var(--c); }
+.lift { inset: 0; border-radius: inherit; box-shadow: 0 3px 10px var(--shadow); }
+.ring { border-radius: 3.5px; box-shadow: 0 0 0 1.5px var(--c); z-index: 9; }
+.minimap { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; background: var(--dim); }
+.minikeys {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: 2px;
+  width: 58%;
+  padding: 5px;
+  border-radius: 5px;
+  background: var(--panel);
+  box-shadow: 0 0 0 0.5px var(--edge), 0 4px 14px var(--shadow);
+}
+.minikeys i { height: 7px; border-radius: 1.5px; background: var(--cap); box-shadow: inset 0 0 0 0.5px var(--cap-edge); }
+.minikeys i:nth-child(7n + 3) { background: color-mix(in srgb, var(--c) 45%, var(--cap)); }
+.label, .badge, .tag { position: absolute; z-index: 11; white-space: nowrap; font-size: 11px; }
+.label { left: 50%; bottom: 10%; transform: translateX(-50%); padding: 3px 9px; border-radius: 7px; background: var(--alert); color: #fff; }
+.badge { top: 6px; right: 6px; padding: 1px 6px; border-radius: 5px; background: var(--alert); color: #fff; }
+.tag { top: 6px; left: 6px; padding: 0 5px; border-radius: 4px; background: var(--tip); color: var(--muted); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+.dots { position: relative; display: flex; gap: 5px; width: fit-content; height: 6px; margin: 7px auto 0; }
+.dot { width: 6px; height: 6px; border-radius: 3px; background: var(--muted); opacity: 0.5; }
+.dot.other { background: none; box-shadow: inset 0 0 0 1px var(--muted); }
+.dot.here { position: absolute; left: 0; width: 14px; background: var(--c); opacity: 1; }
+#tip-note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+#tip-note:empty { display: none; }
 </style>
 </head>
 <body>
@@ -205,7 +255,7 @@ footer p { white-space: nowrap; }
   <div id="kb"></div>
   <footer><ul id="legend"></ul><p>Hover a key to see what it does · Esc to close</p></footer>
 </main>
-<div id="tip" role="tooltip"><div id="tip-head"><span id="tip-chord"></span><span id="tip-group"></span></div><div id="tip-desc"></div></div>
+<div id="tip" role="tooltip"><div id="tip-head"><span id="tip-chord"></span><span id="tip-group"></span></div><div id="tip-desc"></div><div id="tip-preview"></div><div id="tip-note"></div></div>
 <script>window.RETILE = __RETILE_DATA__;</script>
 <script>
 "use strict";
@@ -357,6 +407,145 @@ function fit() {
 fit();
 addEventListener("resize", fit);
 
+// --- preview ------------------------------------------------------------------
+// A preview loops: the scene fades in, holds, acts out the key, holds the
+// result and fades out. BEAT marks those points as fractions of LOOP.
+const LOOP = 3400;
+const BEAT = { shown: 0.06, act: 0.28, done: 0.58, fade: 0.9 };
+const MID = (BEAT.act + BEAT.done) / 2;
+const EASE = "cubic-bezier(0.45, 0, 0.2, 1)";
+const STAGE = { w: 290, h: 150 };
+const NUDGE = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+let playing = [];
+
+// Renders a binding's preview (see preview.lua for its fields) into the tooltip.
+function preview(p) {
+  for (const a of playing) a.cancel();
+  playing = [];
+  const box = $("tip-preview");
+  box.replaceChildren();
+  $("tip-note").textContent = p?.note || "";
+  if (!p) return;
+
+  const scale = Math.min(STAGE.w / p.view.w, STAGE.h / p.view.h);
+  // In px; windows are inset by 1px so the gaps between them stay visible.
+  const px = (r, inset = 0) => ({
+    x: (r.x - p.view.x) * scale + inset,
+    y: (r.y - p.view.y) * scale + inset,
+    w: Math.max(r.w * scale - 2 * inset, 2),
+    h: Math.max(r.h * scale - 2 * inset, 2),
+  });
+  const css = (b, dx = 0, dy = 0) => ({ left: `${b.x + dx}px`, top: `${b.y + dy}px`, width: `${b.w}px`, height: `${b.h}px` });
+  const play = (node, keyframes) =>
+    playing.push(node.animate(keyframes, { duration: LOOP, iterations: Infinity, fill: "both" }));
+  // Holds `a` until `start`, then eases to `b` by BEAT.done, passing `via` at MID.
+  const track = (a, b, via, start = BEAT.act) => [
+    { offset: 0, ...a },
+    { offset: start, ...a, easing: EASE },
+    ...(via ? [{ offset: MID, ...via, easing: EASE }] : []),
+    { offset: BEAT.done, ...b },
+    { offset: 1, ...b },
+  ];
+  // Pushes towards a blocked direction and springs back.
+  const shake = (b, dir) => {
+    const [x, y] = NUDGE[dir];
+    const at = (offset, d) => ({ offset, ...css(b, x * d, y * d), easing: "ease-in-out" });
+    return [at(0, 0), at(BEAT.act, 0), at(BEAT.act + 0.05, 5), at(BEAT.act + 0.1, 0), at(BEAT.act + 0.14, 2), at(BEAT.act + 0.18, 0), at(1, 0)];
+  };
+
+  const stage = el("div", "stage");
+  Object.assign(stage.style, { width: `${p.view.w * scale}px`, height: `${p.view.h * scale}px` });
+  const world = el("div", "world");
+  stage.append(world);
+  for (const d of p.desktops) {
+    const desk = el("div", "desk");
+    Object.assign(desk.style, css(px(d)));
+    world.append(desk);
+  }
+  if (p.pan) {
+    const to = `translate(${-p.pan.x * scale}px, ${-p.pan.y * scale}px)`;
+    play(world, track({ transform: "none" }, { transform: to }, { transform: to }));
+  }
+
+  const focused = (i, phase) => p.focus?.[phase] === i + 1;
+  const floats = (w, phase) => w.floating === "both" || w.floating === phase;
+  // How a window moves: blocked, carried (via), or from one frame to the next;
+  // with a pan, windows that aren't carried move once the new place is in view.
+  const motion = (w, i, inset) => {
+    const a = px(w.from || w.to, inset), b = px(w.to || w.from, inset);
+    if (p.bump?.window === i + 1) return shake(a, p.bump.dir);
+    return track(css(a), css(b), w.via && css(px(w.via, inset)), p.pan && !w.via ? MID : BEAT.act);
+  };
+  p.windows.forEach((w, i) => {
+    const win = el("div", "win"), tint = el("div", "tint");
+    win.append(tint);
+    play(win, motion(w, i, 1));
+    const z = (phase) => (floats(w, phase) || !w.from ? 3 : 1) + (focused(i, phase) ? 1 : 0);
+    play(win, track({ zIndex: z("from") }, { zIndex: z("to") }));
+    play(tint, track({ opacity: focused(i, "from") ? 0.22 : 0 }, { opacity: focused(i, "to") ? 0.22 : 0 }));
+    if (w.floating) {
+      const lift = el("div", "lift");
+      win.append(lift);
+      play(lift, track({ opacity: floats(w, "from") ? 1 : 0 }, { opacity: floats(w, "to") ? 1 : 0 }));
+    }
+    if (!w.from) play(win, track({ opacity: 0, transform: "scale(0.9)" }, { opacity: 1, transform: "none" }));
+    world.append(win);
+  });
+
+  if (p.focus) {
+    const ring = el("div", "ring");
+    const from = p.windows[p.focus.from - 1], to = p.windows[p.focus.to - 1];
+    if (p.bump && !p.bump.window) play(ring, shake(px(from.to, 1), p.bump.dir));
+    else if (p.focus.from === p.focus.to) play(ring, motion(from, p.focus.from - 1, 1));
+    else play(ring, track(css(px(from.from, 1)), css(px(to.to, 1))));
+    world.append(ring);
+  }
+
+  if (p.keymap) {
+    const map = el("div", "minimap"), keys = el("div", "minikeys");
+    for (let i = 0; i < 44; i++) keys.append(el("i"));
+    map.append(keys);
+    play(map, track({ opacity: 0 }, { opacity: 1 }));
+    play(keys, track({ transform: "scale(0.94)" }, { transform: "none" }));
+    stage.append(map);
+  }
+  if (p.paused) {
+    const badge = el("span", "badge", "Paused");
+    play(badge, track({ opacity: p.paused.from ? 1 : 0 }, { opacity: p.paused.to ? 1 : 0 }));
+    stage.append(badge);
+  }
+  if (p.label) {
+    const label = el("span", "label", p.label);
+    play(label, track({ opacity: 0 }, { opacity: 1 }, null, MID));
+    stage.append(label);
+  }
+  if (p.example) stage.append(el("span", "tag", "Example"));
+  box.append(stage);
+
+  if (p.dots) {
+    const row = el("div", "dots"), STEP = 11, WIDER = 4;
+    p.dots.kinds.forEach((kind, i) => {
+      const dot = el("span", kind === "user" ? "dot" : "dot other");
+      if (p.dots.added && i === p.dots.kinds.length - 1) play(dot, track({ transform: "scale(0)" }, { transform: "none" }, { transform: "none" }));
+      row.append(dot);
+    });
+    const here = el("span", "dot here");
+    const left = (i) => `${(i - 1) * STEP - WIDER}px`;
+    play(here, track({ left: left(p.dots.from) }, { left: left(p.dots.to) }, { left: left(p.dots.to) }));
+    row.append(here);
+    box.append(row);
+  }
+
+  play(box, [{ offset: 0, opacity: 0 }, { offset: BEAT.shown, opacity: 1 }, { offset: BEAT.fade, opacity: 1 }, { offset: 1, opacity: 0 }]);
+  if (reducedMotion.matches) {
+    for (const a of playing) {
+      a.pause();
+      a.currentTime = LOOP * (BEAT.done + BEAT.fade) / 2;
+    }
+  }
+}
+
 // --- tooltip ------------------------------------------------------------------
 let current = null, hideTimer = 0;
 
@@ -369,6 +558,7 @@ function show(target) {
   $("tip-group").textContent = groupLabel.get(b.group) || "";
   $("tip-desc").textContent = b.desc;
   tip.style.setProperty("--c", color(b.group));
+  preview(b.preview);
   kb.style.setProperty("--lit", color(b.group));
   for (const m of kb.querySelectorAll("[data-mod]")) m.classList.toggle("lit", b.mods.includes(m.dataset.mod));
 
@@ -386,6 +576,7 @@ function show(target) {
 function hide() {
   current = null;
   tip.classList.remove("on");
+  preview(null);
   for (const m of kb.querySelectorAll(".lit")) m.classList.remove("lit");
 }
 

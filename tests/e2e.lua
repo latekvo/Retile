@@ -398,12 +398,61 @@ local function run()
       check(tip and table.concat(tip.lit, " ") == "cmd cmd shift shift", "and lights both ⇧ and both ⌘ keys",
         tip and table.concat(tip.lit, " "))
     end
+
+    -- Previews, read from the page: what ⌘→ and ⌃⌥2 would do right now.
+    local slots = bySlot(fixtureWindows())
+    local plan, planWhy = js(view, [[(() => {
+      const binds = window.RETILE.binds;
+      const find = (key, mods) => binds.findIndex((b) => b.key === key && b.mods.join() === mods);
+      const swap = find("right", "cmd"), tall = find("2", "ctrl,alt");
+      const seg = document.querySelector(`.seg[data-b="${swap}"]`).getBoundingClientRect();
+      return { swap: binds[swap].preview, tall: binds[tall].preview.windows.map((w) => w.to),
+        x: seg.left + seg.width / 2, y: seg.top + seg.height / 2 };
+    })()]])
+    local swap = plan and plan.swap
+    check(swap and not swap.example and not swap.bump and swap.focus.from == 1 and swap.focus.to == 1 and #swap.windows == 3
+      and sameRect(swap.windows[1].to, slots[2]:frame()) and sameRect(swap.windows[2].to, slots[1]:frame()),
+      "⌘→'s preview swaps the focused window with its right neighbour", swap and hs.json.encode(swap) or planWhy)
+    -- ⌃⌥] and ⌃⌥. above changed this space's ratio and main-area count.
+    local tall = expected("tall", 3, screen, { ratio = 0.65, masters = 2 })()
+    check(plan and #plan.tall == 3 and sameRect(plan.tall[1], tall[1]) and sameRect(plan.tall[2], tall[2]) and sameRect(plan.tall[3], tall[3]),
+      "⌃⌥2's preview shows the tall layout's frames", plan and hs.json.encode(plan.tall) or planWhy)
+    if swap then
+      local f = hw:frame()
+      hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.mouseMoved, { x = f.x + plan.x, y = f.y + plan.y }):post()
+      check(waitFor(function() return js(view, [[document.getElementById("tip-chord").textContent]]) == "⌘ →" end, 2),
+        "hovering ⌘→ shows its tooltip")
+      -- Seeked to two points of the loop: before the key acts, and after.
+      local motion, motionWhy = js(view, [[(() => {
+        const anims = document.getAnimations();
+        const win = document.querySelector("#tip-preview .win");
+        const at = (t) => {
+          for (const a of anims) a.currentTime = 3400 * t;
+          const r = win.getBoundingClientRect();
+          return { x: r.left, w: r.width };
+        };
+        return { windows: document.querySelectorAll("#tip-preview .win").length, running: anims.length,
+          before: at(0.1), after: at(0.8),
+          keyframes: win.getAnimations().map((a) => a.effect.getKeyframes().map((k) => k.left).join(" ")) };
+      })()]])
+      check(motion and motion.windows == 3 and motion.running > 0 and motion.after.x > motion.before.x + motion.before.w / 2,
+        "its preview draws the three windows and slides the focused one right",
+        motion and hs.json.encode(motion) or motionWhy)
+    end
     press({}, "escape")
     check(waitFor(function() return Retile.overlay.view == nil end, 2), "Escape closes it")
     check(waitFor(function()
       local f = hs.window.focusedWindow()
       return f and f:id() == first:id()
     end, 2), "and focus returns to the previous window")
+    if swap then
+      press({ "cmd" }, "right")
+      expectTiled("⌘→ puts every window where its preview showed", slots, function()
+        local frames = {}
+        for i, w in ipairs(swap.windows) do frames[i] = w.to end
+        return frames
+      end)
+    end
   end
 end
 
