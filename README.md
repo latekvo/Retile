@@ -6,11 +6,17 @@ it does, acted out on a small model of your screen.
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="media/hero-dark.gif"><img alt="The ⌘Y keyboard map previewing keys as the cursor hovers them" src="media/hero-light.gif"></picture>
 
-<table>
-<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/swap-dark.gif"><img alt="⌘← swaps the focused window with its neighbour" src="media/swap-light.gif" width="270"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/focus-dark.gif"><img alt="⌃⌥← moves focus to the neighbouring window" src="media/focus-light.gif" width="270"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/edge-dark.gif"><img alt="⌘→ at the edge bumps and explains why nothing happens" src="media/edge-light.gif" width="270"></picture></td></tr>
-<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/space-dark.gif"><img alt="⇧⌘→ carries the window to the next space" src="media/space-light.gif" width="270"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/display-dark.gif"><img alt="⇧⌘↑ moves the window to the display above" src="media/display-light.gif" width="270"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/float-dark.gif"><img alt="⌃⌥F floats the window and the rest close up" src="media/float-light.gif" width="270"></picture></td></tr>
-<tr><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/pause-dark.gif"><img alt="⌃⌥P pauses tiling, so new windows are left alone" src="media/pause-light.gif" width="270"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/resize-dark.gif"><img alt="⌃⌥] grows the main area" src="media/resize-light.gif" width="270"></picture></td><td><picture><source media="(prefers-color-scheme: dark)" srcset="media/masters-dark.gif"><img alt="⌃⌥. puts two windows in the main area" src="media/masters-light.gif" width="270"></picture></td></tr>
-</table>
+<p>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/swap-dark.gif"><img alt="⌘← swaps the focused window with its neighbour" src="media/swap-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/focus-dark.gif"><img alt="⌃⌥← moves focus to the neighbouring window" src="media/focus-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/edge-dark.gif"><img alt="⌘→ at the edge bumps and explains why nothing happens" src="media/edge-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/space-dark.gif"><img alt="⇧⌘→ carries the window to the next space" src="media/space-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/display-dark.gif"><img alt="⇧⌘↑ moves the window to the display above" src="media/display-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/float-dark.gif"><img alt="⌃⌥F floats the window and the rest close up" src="media/float-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/pause-dark.gif"><img alt="⌃⌥P pauses tiling, so new windows are left alone" src="media/pause-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/resize-dark.gif"><img alt="⌃⌥] grows the main area" src="media/resize-light.gif" width="270"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="media/masters-dark.gif"><img alt="⌃⌥. puts two windows in the main area" src="media/masters-light.gif" width="270"></picture>
+</p>
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="media/layouts-dark.gif"><img alt="Grid, tall, wide, columns, rows, spiral and monocle layouts" src="media/layouts-light.gif" width="460"></picture>
 
